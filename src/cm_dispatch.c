@@ -90,13 +90,25 @@ static cm_error_t load_file_direct(cm_ctx_t *ctx, const char *path,
                                    cm_format_t fmt)
 {
     switch (fmt) {
+#ifdef CM_HAVE_JSON
         case CM_FORMAT_JSON:       return cm_json_load_file(ctx, path);
+#endif
+#ifdef CM_HAVE_YAML
         case CM_FORMAT_YAML:       return cm_yaml_load_file(ctx, path);
+#endif
+#ifdef CM_HAVE_XML
         case CM_FORMAT_XML:        return cm_xml_load_file(ctx, path);
+#endif
+#ifdef CM_HAVE_INI
         case CM_FORMAT_INI:        return cm_ini_load_file(ctx, path);
+#endif
+#ifdef CM_HAVE_TOML
         case CM_FORMAT_TOML:       return cm_toml_load_file(ctx, path);
+#endif
+#ifdef CM_HAVE_ENV
         case CM_FORMAT_ENV:        return cm_env_load_file(ctx, path);
         case CM_FORMAT_PROPERTIES: return cm_properties_load_file(ctx, path);
+#endif
         default:                   return CM_ERR_UNSUPPORTED;
     }
 }
@@ -105,13 +117,25 @@ static cm_error_t load_string_direct(cm_ctx_t *ctx, const char *data,
                                      cm_format_t fmt)
 {
     switch (fmt) {
+#ifdef CM_HAVE_JSON
         case CM_FORMAT_JSON:       return cm_json_load_string(ctx, data);
+#endif
+#ifdef CM_HAVE_YAML
         case CM_FORMAT_YAML:       return cm_yaml_load_string(ctx, data);
+#endif
+#ifdef CM_HAVE_XML
         case CM_FORMAT_XML:        return cm_xml_load_string(ctx, data);
+#endif
+#ifdef CM_HAVE_INI
         case CM_FORMAT_INI:        return cm_ini_load_string(ctx, data);
+#endif
+#ifdef CM_HAVE_TOML
         case CM_FORMAT_TOML:       return cm_toml_load_string(ctx, data);
+#endif
+#ifdef CM_HAVE_ENV
         case CM_FORMAT_ENV:        return cm_env_load_string(ctx, data);
         case CM_FORMAT_PROPERTIES: return cm_properties_load_string(ctx, data);
+#endif
         default:                   return CM_ERR_UNSUPPORTED;
     }
 }
@@ -167,13 +191,25 @@ cm_error_t cm_save_file(cm_ctx_t *ctx, const char *path, cm_format_t fmt)
     if (fmt == CM_FORMAT_AUTO) fmt = CM_FORMAT_JSON; /* last resort */
 
     switch (fmt) {
+#ifdef CM_HAVE_JSON
         case CM_FORMAT_JSON:       return cm_json_save_file(ctx, path);
+#endif
+#ifdef CM_HAVE_YAML
         case CM_FORMAT_YAML:       return cm_yaml_save_file(ctx, path);
+#endif
+#ifdef CM_HAVE_XML
         case CM_FORMAT_XML:        return cm_xml_save_file(ctx, path);
+#endif
+#ifdef CM_HAVE_INI
         case CM_FORMAT_INI:        return cm_ini_save_file(ctx, path);
+#endif
+#ifdef CM_HAVE_TOML
         case CM_FORMAT_TOML:       return cm_toml_save_file(ctx, path);
+#endif
+#ifdef CM_HAVE_ENV
         case CM_FORMAT_ENV:        return cm_env_save_file(ctx, path);
         case CM_FORMAT_PROPERTIES: return cm_properties_save_file(ctx, path);
+#endif
         default:                   return CM_ERR_UNSUPPORTED;
     }
 }
@@ -187,13 +223,25 @@ char *cm_save_string(cm_ctx_t *ctx, cm_format_t fmt, size_t *out_len)
     if (fmt == CM_FORMAT_AUTO) fmt = CM_FORMAT_JSON;
 
     switch (fmt) {
+#ifdef CM_HAVE_JSON
         case CM_FORMAT_JSON:       return cm_json_save_string(ctx, out_len);
+#endif
+#ifdef CM_HAVE_YAML
         case CM_FORMAT_YAML:       return cm_yaml_save_string(ctx, out_len);
+#endif
+#ifdef CM_HAVE_XML
         case CM_FORMAT_XML:        return cm_xml_save_string(ctx, out_len);
+#endif
+#ifdef CM_HAVE_INI
         case CM_FORMAT_INI:        return cm_ini_save_string(ctx, out_len);
+#endif
+#ifdef CM_HAVE_TOML
         case CM_FORMAT_TOML:       return cm_toml_save_string(ctx, out_len);
+#endif
+#ifdef CM_HAVE_ENV
         case CM_FORMAT_ENV:        return cm_env_save_string(ctx, out_len);
         case CM_FORMAT_PROPERTIES: return cm_properties_save_string(ctx, out_len);
+#endif
         default:                   return NULL;
     }
 }
