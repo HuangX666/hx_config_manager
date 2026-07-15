@@ -188,6 +188,39 @@ static void test_clear(void)
     PASS();
 }
 
+static void test_invalid_output_pointers(void)
+{
+    TEST(invalid_output_pointers);
+    cm_ctx_t *ctx = cm_ctx_create();
+    assert(cm_set_string(ctx, "value", "text") == CM_OK);
+    assert(cm_get_string(ctx, "value", NULL) == CM_ERR_NULL_PTR);
+    assert(cm_get_int(ctx, "value", NULL) == CM_ERR_NULL_PTR);
+    assert(cm_array_length(ctx, "value", NULL) == CM_ERR_NULL_PTR);
+    cm_ctx_destroy(ctx);
+    PASS();
+}
+
+static void test_delete_does_not_create_path(void)
+{
+    TEST(delete_does_not_create_path);
+    cm_ctx_t *ctx = cm_ctx_create();
+    assert(cm_delete(ctx, "missing.parent.value") == CM_ERR_NOT_FOUND);
+    assert(!cm_has_key(ctx, "missing"));
+    cm_ctx_destroy(ctx);
+    PASS();
+}
+
+static void test_nested_set_rejects_scalar_parent(void)
+{
+    TEST(nested_set_rejects_scalar_parent);
+    cm_ctx_t *ctx = cm_ctx_create();
+    assert(cm_set_string(ctx, "parent", "scalar") == CM_OK);
+    assert(cm_set_string(ctx, "parent.child.value", "invalid") == CM_ERR_TYPE_MISMATCH);
+    assert(!cm_has_key(ctx, "parent.child"));
+    cm_ctx_destroy(ctx);
+    PASS();
+}
+
 int main(void)
 {
     printf("=== test_core ===\n");
@@ -205,6 +238,9 @@ int main(void)
     test_array();
     test_walk_count();
     test_clear();
+    test_invalid_output_pointers();
+    test_delete_does_not_create_path();
+    test_nested_set_rejects_scalar_parent();
     printf("All core tests passed.\n");
     return 0;
 }

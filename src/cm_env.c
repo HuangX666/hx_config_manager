@@ -92,7 +92,7 @@ static cm_error_t set_auto(cm_ctx_t *ctx, const char *key, const char *raw)
 
 static cm_error_t parse_env_data(cm_ctx_t *ctx, const char *data)
 {
-    char *copy = strdup(data);
+    char *copy = cm_internal_strdup(data);
     if (!copy) return CM_ERR_NO_MEMORY;
 
     char *line = copy;
@@ -119,7 +119,11 @@ static cm_error_t parse_env_data(cm_ctx_t *ctx, const char *data)
                 /* handle inline comment after unquoted value */
                 char vbuf[4096];
                 unquote(val, vbuf, sizeof(vbuf));
-                set_auto(ctx, key, vbuf);
+                cm_error_t result = set_auto(ctx, key, vbuf);
+                if (result != CM_OK) {
+                    free(copy);
+                    return result;
+                }
             }
         }
 
@@ -141,12 +145,9 @@ cm_error_t cm_env_load_string(cm_ctx_t *ctx, const char *data)
 
 cm_error_t cm_env_load_file(cm_ctx_t *ctx, const char *path)
 {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return CM_ERR_IO;
-    fseek(fp, 0, SEEK_END); long sz = ftell(fp); rewind(fp);
-    char *buf = (char *)malloc((size_t)sz + 1);
-    if (!buf) { fclose(fp); return CM_ERR_NO_MEMORY; }
-    fread(buf, 1, (size_t)sz, fp); buf[sz]='\0'; fclose(fp);
+    char *buf = NULL;
+    cm_error_t read_result = cm_internal_read_file(path, &buf, NULL);
+    if (read_result != CM_OK) return read_result;
     cm_error_t err = cm_env_load_string(ctx, buf);
     free(buf);
     return err;
@@ -154,15 +155,20 @@ cm_error_t cm_env_load_file(cm_ctx_t *ctx, const char *path)
 
 /* ─── .env save ──────────────────────────────────────────────────── */
 
-typedef struct { char *buf; size_t len; size_t cap; } str_buf_t;
+typedef struct { char *buf; size_t len; size_t cap; int failed; } str_buf_t;
 static void sb_append(str_buf_t *b, const char *s)
 {
     size_t sl = strlen(s);
+    if (b->failed) return;
+    if (sl > SIZE_MAX - b->len - 1) { b->failed = 1; return; }
     if (b->len + sl + 1 > b->cap) {
         size_t nc = b->cap ? b->cap*2 : 4096;
-        while (nc < b->len+sl+1) nc*=2;
+        while (nc < b->len+sl+1) {
+            if (nc > SIZE_MAX / 2) { b->failed = 1; return; }
+            nc*=2;
+        }
         char *p = (char*)realloc(b->buf, nc);
-        if (!p) return;
+        if (!p) { b->failed = 1; return; }
         b->buf=p; b->cap=nc;
     }
     memcpy(b->buf+b->len, s, sl);
@@ -195,7 +201,7 @@ static void env_walk(const char *path, cm_node_t *node, void *ud)
     snprintf(env_key, sizeof(env_key), "%s", path);
     for (char *p = env_key; *p; p++) {
         if (*p == '.' || *p == '[' || *p == ']') *p = '_';
-        else *p = toupper((unsigned char)*p);
+        else *p = (char)toupper((unsigned char)*p);
     }
 
     sb_append(out, env_key);
@@ -213,10 +219,11 @@ static void env_walk(const char *path, cm_node_t *node, void *ud)
 char *cm_env_save_string(cm_ctx_t *ctx, size_t *out_len)
 {
     if (!ctx) return NULL;
-    str_buf_t out = {NULL,0,0};
+    str_buf_t out = {NULL,0,0,0};
     cm_walk(ctx, env_walk, &out);
+    if (out.failed) { free(out.buf); return NULL; }
     if (out_len) *out_len = out.len;
-    return out.buf ? out.buf : strdup("");
+    return out.buf ? out.buf : cm_internal_strdup("");
 }
 
 cm_error_t cm_env_save_file(cm_ctx_t *ctx, const char *path)
@@ -224,17 +231,16 @@ cm_error_t cm_env_save_file(cm_ctx_t *ctx, const char *path)
     size_t len=0;
     char *str = cm_env_save_string(ctx,&len);
     if (!str) return CM_ERR_NO_MEMORY;
-    FILE *fp = fopen(path,"wb");
-    if (!fp) { free(str); return CM_ERR_IO; }
-    fwrite(str,1,len,fp); fclose(fp); free(str);
-    return CM_OK;
+    cm_error_t result = cm_internal_write_file(path, str, len);
+    free(str);
+    return result;
 }
 
 /* ─── .properties loader ─────────────────────────────────────────── */
 
 static cm_error_t parse_properties_data(cm_ctx_t *ctx, const char *data)
 {
-    char *copy = strdup(data);
+    char *copy = cm_internal_strdup(data);
     if (!copy) return CM_ERR_NO_MEMORY;
 
     char *line = copy;
@@ -245,8 +251,9 @@ static cm_error_t parse_properties_data(cm_ctx_t *ctx, const char *data)
         char *p = ltrim(line);
 
         /* handle line continuation */
-        while (p[strlen(p)-1] == '\\' && nl) {
-            p[strlen(p)-1] = '\0';
+        size_t line_length = strlen(p);
+        while (line_length > 0 && p[line_length - 1] == '\\' && nl) {
+            p[--line_length] = '\0';
             /* TODO: accumulate – simple approach for now */
         }
 
@@ -268,7 +275,11 @@ static cm_error_t parse_properties_data(cm_ctx_t *ctx, const char *data)
                 rtrim(val);
 
                 /* convert key dots to nested path */
-                set_auto(ctx, key, val);
+                cm_error_t result = set_auto(ctx, key, val);
+                if (result != CM_OK) {
+                    free(copy);
+                    return result;
+                }
             }
         }
 
@@ -290,12 +301,9 @@ cm_error_t cm_properties_load_string(cm_ctx_t *ctx, const char *data)
 
 cm_error_t cm_properties_load_file(cm_ctx_t *ctx, const char *path)
 {
-    FILE *fp = fopen(path,"rb");
-    if (!fp) return CM_ERR_IO;
-    fseek(fp,0,SEEK_END); long sz=ftell(fp); rewind(fp);
-    char *buf=(char*)malloc((size_t)sz+1);
-    if (!buf) { fclose(fp); return CM_ERR_NO_MEMORY; }
-    fread(buf,1,(size_t)sz,fp); buf[sz]='\0'; fclose(fp);
+    char *buf = NULL;
+    cm_error_t read_result = cm_internal_read_file(path, &buf, NULL);
+    if (read_result != CM_OK) return read_result;
     cm_error_t err = cm_properties_load_string(ctx, buf);
     free(buf);
     return err;
@@ -322,11 +330,12 @@ static void props_walk(const char *path, cm_node_t *node, void *ud)
 char *cm_properties_save_string(cm_ctx_t *ctx, size_t *out_len)
 {
     if (!ctx) return NULL;
-    str_buf_t out = {NULL,0,0};
+    str_buf_t out = {NULL,0,0,0};
     sb_append(&out, "# Generated by config_manager\n");
     cm_walk(ctx, props_walk, &out);
+    if (out.failed) { free(out.buf); return NULL; }
     if (out_len) *out_len = out.len;
-    return out.buf ? out.buf : strdup("");
+    return out.buf ? out.buf : cm_internal_strdup("");
 }
 
 cm_error_t cm_properties_save_file(cm_ctx_t *ctx, const char *path)
@@ -334,8 +343,7 @@ cm_error_t cm_properties_save_file(cm_ctx_t *ctx, const char *path)
     size_t len=0;
     char *str = cm_properties_save_string(ctx,&len);
     if (!str) return CM_ERR_NO_MEMORY;
-    FILE *fp = fopen(path,"wb");
-    if (!fp) { free(str); return CM_ERR_IO; }
-    fwrite(str,1,len,fp); fclose(fp); free(str);
-    return CM_OK;
+    cm_error_t result = cm_internal_write_file(path, str, len);
+    free(str);
+    return result;
 }

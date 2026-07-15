@@ -100,16 +100,22 @@ typedef struct {
     char  *buf;
     size_t len;
     size_t cap;
+    int failed;
 } ini_buf_t;
 
 static void ini_buf_append(ini_buf_t *b, const char *s)
 {
     size_t sl = strlen(s);
+    if (b->failed) return;
+    if (sl > SIZE_MAX - b->len - 1) { b->failed = 1; return; }
     if (b->len + sl + 1 > b->cap) {
         size_t nc = b->cap ? b->cap * 2 : 4096;
-        while (nc < b->len + sl + 1) nc *= 2;
+        while (nc < b->len + sl + 1) {
+            if (nc > SIZE_MAX / 2) { b->failed = 1; return; }
+            nc *= 2;
+        }
         char *p = (char *)realloc(b->buf, nc);
-        if (!p) return;
+        if (!p) { b->failed = 1; return; }
         b->buf = p; b->cap = nc;
     }
     memcpy(b->buf + b->len, s, sl);
@@ -222,7 +228,7 @@ static void ini_walk_tree(cm_node_t *node, const char *prefix,
 char *cm_ini_save_string(cm_ctx_t *ctx, size_t *out_len)
 {
     if (!ctx) return NULL;
-    ini_buf_t out = {NULL, 0, 0};
+    ini_buf_t out = {NULL, 0, 0, 0};
     ini_emit_t em;
     memset(&em, 0, sizeof(em));
     em.out = &out;
@@ -230,8 +236,10 @@ char *cm_ini_save_string(cm_ctx_t *ctx, size_t *out_len)
     /* Walk tree: leaves-before-objects ensures global keys come first */
     ini_walk_tree(ctx->root, "", ini_emit_walk, &em);
 
+    if (out.failed) { free(out.buf); return NULL; }
+
     if (out_len) *out_len = out.len;
-    return out.buf ? out.buf : strdup("");
+    return out.buf ? out.buf : cm_internal_strdup("");
 }
 
 cm_error_t cm_ini_save_file(cm_ctx_t *ctx, const char *path)
@@ -240,10 +248,7 @@ cm_error_t cm_ini_save_file(cm_ctx_t *ctx, const char *path)
     char  *str = cm_ini_save_string(ctx, &len);
     if (!str) return CM_ERR_NO_MEMORY;
 
-    FILE *fp = fopen(path, "wb");
-    if (!fp) { free(str); return CM_ERR_IO; }
-    fwrite(str, 1, len, fp);
-    fclose(fp);
+    cm_error_t result = cm_internal_write_file(path, str, len);
     free(str);
-    return CM_OK;
+    return result;
 }

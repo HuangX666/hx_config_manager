@@ -261,7 +261,7 @@ endif()
 
 # Warnings
 if(MSVC)
-    target_compile_options(config_manager PRIVATE /W3)
+    target_compile_options(config_manager PUBLIC /utf-8 PRIVATE /W4)
 else()
     target_compile_options(config_manager PRIVATE -Wall -Wextra -Wpedantic)
 endif()

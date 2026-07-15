@@ -189,16 +189,9 @@ cm_error_t cm_toml_load_string(cm_ctx_t *ctx, const char *data)
 
 cm_error_t cm_toml_load_file(cm_ctx_t *ctx, const char *path)
 {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return CM_ERR_IO;
-    fseek(fp, 0, SEEK_END);
-    long sz = ftell(fp);
-    rewind(fp);
-    char *buf = (char *)malloc((size_t)sz + 1);
-    if (!buf) { fclose(fp); return CM_ERR_NO_MEMORY; }
-    fread(buf, 1, (size_t)sz, fp);
-    buf[sz] = '\0';
-    fclose(fp);
+    char *buf = NULL;
+    cm_error_t read_result = cm_internal_read_file(path, &buf, NULL);
+    if (read_result != CM_OK) return read_result;
     cm_error_t err = cm_toml_load_string(ctx, buf);
     free(buf);
     return err;
@@ -206,16 +199,21 @@ cm_error_t cm_toml_load_file(cm_ctx_t *ctx, const char *path)
 
 /* ─── Serializer ─────────────────────────────────────────────────── */
 
-typedef struct { char *buf; size_t len; size_t cap; } toml_out_t;
+typedef struct { char *buf; size_t len; size_t cap; int failed; } toml_out_t;
 
 static void tout_append(toml_out_t *o, const char *s)
 {
     size_t sl = strlen(s);
+    if (o->failed) return;
+    if (sl > SIZE_MAX - o->len - 1) { o->failed = 1; return; }
     if (o->len + sl + 1 > o->cap) {
         size_t nc = o->cap ? o->cap * 2 : 4096;
-        while (nc < o->len + sl + 1) nc *= 2;
+        while (nc < o->len + sl + 1) {
+            if (nc > SIZE_MAX / 2) { o->failed = 1; return; }
+            nc *= 2;
+        }
         char *p = (char *)realloc(o->buf, nc);
-        if (!p) return;
+        if (!p) { o->failed = 1; return; }
         o->buf = p; o->cap = nc;
     }
     memcpy(o->buf + o->len, s, sl);
@@ -318,10 +316,11 @@ static void emit_toml_table(toml_out_t *out, cm_node_t *obj,
 char *cm_toml_save_string(cm_ctx_t *ctx, size_t *out_len)
 {
     if (!ctx) return NULL;
-    toml_out_t out = {NULL, 0, 0};
+    toml_out_t out = {NULL, 0, 0, 0};
     emit_toml_table(&out, ctx->root, "");
+    if (out.failed) { free(out.buf); return NULL; }
     if (out_len) *out_len = out.len;
-    return out.buf ? out.buf : strdup("");
+    return out.buf ? out.buf : cm_internal_strdup("");
 }
 
 cm_error_t cm_toml_save_file(cm_ctx_t *ctx, const char *path)
@@ -329,10 +328,7 @@ cm_error_t cm_toml_save_file(cm_ctx_t *ctx, const char *path)
     size_t len = 0;
     char  *str = cm_toml_save_string(ctx, &len);
     if (!str) return CM_ERR_NO_MEMORY;
-    FILE *fp = fopen(path, "wb");
-    if (!fp) { free(str); return CM_ERR_IO; }
-    fwrite(str, 1, len, fp);
-    fclose(fp);
+    cm_error_t result = cm_internal_write_file(path, str, len);
     free(str);
-    return CM_OK;
+    return result;
 }

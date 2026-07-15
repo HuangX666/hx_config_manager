@@ -284,10 +284,7 @@ cm_error_t cm_xml_save_file(cm_ctx_t *ctx, const char *path)
     char  *str = cm_xml_save_string(ctx, &len);
     if (!str) return CM_ERR_NO_MEMORY;
 
-    FILE *fp = fopen(path, "wb");
-    if (!fp) { free(str); return CM_ERR_IO; }
-    fwrite(str, 1, len, fp);
-    fclose(fp);
+    cm_error_t result = cm_internal_write_file(path, str, len);
     free(str);
-    return CM_OK;
+    return result;
 }

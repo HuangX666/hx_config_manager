@@ -208,6 +208,18 @@ static void test_env_export_prefix(void)
     printf("PASS\n");
 }
 
+static void test_properties_blank_lines(void)
+{
+    printf("  %-40s ", "properties_blank_lines");
+    cm_ctx_t *ctx = cm_ctx_create();
+    assert(cm_load_string(ctx, "\n   \nkey=value\n", CM_FORMAT_PROPERTIES) == CM_OK);
+    const char *value = NULL;
+    assert(cm_get_string(ctx, "key", &value) == CM_OK);
+    assert(strcmp(value, "value") == 0);
+    cm_ctx_destroy(ctx);
+    printf("PASS\n");
+}
+
 int main(void)
 {
     printf("=== test_env ===\n");
@@ -218,6 +230,7 @@ int main(void)
     test_env_empty_value();
     test_env_comment_lines();
     test_env_export_prefix();
+    test_properties_blank_lines();
     printf("All ENV/Properties tests passed.\n");
     return 0;
 }

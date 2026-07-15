@@ -20,6 +20,11 @@ foreach(src ${CM_TEST_SOURCES})
     target_include_directories(${test_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
+    if(MSVC)
+        target_compile_options(${test_name} PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(${test_name} PRIVATE -UNDEBUG)
+    endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
     set_tests_properties(${test_name} PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

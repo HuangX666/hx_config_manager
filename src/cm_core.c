@@ -10,12 +10,13 @@
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
+#include <stdint.h>
 
 /* ═══════════════════════════════════════════════════════════════════
  * Internal helpers
  * ═══════════════════════════════════════════════════════════════════ */
 
-static char *cm_strdup(const char *s)
+char *cm_internal_strdup(const char *s)
 {
     if (!s) return NULL;
     size_t len = strlen(s) + 1;
@@ -38,9 +39,13 @@ cm_node_t *cm_node_new_string(const char *key, const char *val)
 {
     cm_node_t *n = node_alloc();
     if (!n) return NULL;
-    n->key        = cm_strdup(key);
+    n->key        = cm_internal_strdup(key);
     n->type       = CM_TYPE_STRING;
-    n->value.sval = cm_strdup(val ? val : "");
+    n->value.sval = cm_internal_strdup(val ? val : "");
+    if ((key && !n->key) || !n->value.sval) {
+        cm_node_free(n);
+        return NULL;
+    }
     return n;
 }
 
@@ -48,7 +53,8 @@ cm_node_t *cm_node_new_int(const char *key, int64_t val)
 {
     cm_node_t *n = node_alloc();
     if (!n) return NULL;
-    n->key        = cm_strdup(key);
+    n->key        = cm_internal_strdup(key);
+    if (key && !n->key) { cm_node_free(n); return NULL; }
     n->type       = CM_TYPE_INT;
     n->value.ival = val;
     return n;
@@ -58,7 +64,8 @@ cm_node_t *cm_node_new_float(const char *key, double val)
 {
     cm_node_t *n = node_alloc();
     if (!n) return NULL;
-    n->key        = cm_strdup(key);
+    n->key        = cm_internal_strdup(key);
+    if (key && !n->key) { cm_node_free(n); return NULL; }
     n->type       = CM_TYPE_FLOAT;
     n->value.fval = val;
     return n;
@@ -68,7 +75,8 @@ cm_node_t *cm_node_new_bool(const char *key, int val)
 {
     cm_node_t *n = node_alloc();
     if (!n) return NULL;
-    n->key        = cm_strdup(key);
+    n->key        = cm_internal_strdup(key);
+    if (key && !n->key) { cm_node_free(n); return NULL; }
     n->type       = CM_TYPE_BOOL;
     n->value.bval = val ? 1 : 0;
     return n;
@@ -78,7 +86,8 @@ cm_node_t *cm_node_new_null(const char *key)
 {
     cm_node_t *n = node_alloc();
     if (!n) return NULL;
-    n->key  = cm_strdup(key);
+    n->key  = cm_internal_strdup(key);
+    if (key && !n->key) { cm_node_free(n); return NULL; }
     n->type = CM_TYPE_NULL;
     return n;
 }
@@ -87,7 +96,8 @@ cm_node_t *cm_node_new_object(const char *key)
 {
     cm_node_t *n = node_alloc();
     if (!n) return NULL;
-    n->key  = cm_strdup(key);
+    n->key  = cm_internal_strdup(key);
+    if (key && !n->key) { cm_node_free(n); return NULL; }
     n->type = CM_TYPE_OBJECT;
     return n;
 }
@@ -96,7 +106,8 @@ cm_node_t *cm_node_new_array(const char *key)
 {
     cm_node_t *n = node_alloc();
     if (!n) return NULL;
-    n->key  = cm_strdup(key);
+    n->key  = cm_internal_strdup(key);
+    if (key && !n->key) { cm_node_free(n); return NULL; }
     n->type = CM_TYPE_ARRAY;
     return n;
 }
@@ -125,7 +136,11 @@ cm_error_t cm_node_object_add(cm_node_t *obj, cm_node_t *child)
     if (obj->type != CM_TYPE_OBJECT) return CM_ERR_TYPE_MISMATCH;
 
     if (obj->value.object.count >= obj->value.object.capacity) {
+        if (obj->value.object.capacity > SIZE_MAX / 2)
+            return CM_ERR_OVERFLOW;
         size_t newcap = obj->value.object.capacity ? obj->value.object.capacity * 2 : 8;
+        if (newcap > SIZE_MAX / sizeof(cm_node_t *))
+            return CM_ERR_OVERFLOW;
         cm_node_t **arr = (cm_node_t **)realloc(
             obj->value.object.children, newcap * sizeof(cm_node_t *));
         if (!arr) return CM_ERR_NO_MEMORY;
@@ -143,7 +158,11 @@ cm_error_t cm_node_array_add(cm_node_t *arr, cm_node_t *item)
     if (arr->type != CM_TYPE_ARRAY) return CM_ERR_TYPE_MISMATCH;
 
     if (arr->value.array.count >= arr->value.array.capacity) {
+        if (arr->value.array.capacity > SIZE_MAX / 2)
+            return CM_ERR_OVERFLOW;
         size_t newcap = arr->value.array.capacity ? arr->value.array.capacity * 2 : 8;
+        if (newcap > SIZE_MAX / sizeof(cm_node_t *))
+            return CM_ERR_OVERFLOW;
         cm_node_t **p = (cm_node_t **)realloc(
             arr->value.array.items, newcap * sizeof(cm_node_t *));
         if (!p) return CM_ERR_NO_MEMORY;
@@ -170,9 +189,12 @@ cm_ctx_t *cm_ctx_create(void)
 
 void cm_ctx_clear(cm_ctx_t *ctx)
 {
+    cm_node_t *new_root;
     if (!ctx) return;
+    new_root = cm_node_new_object(NULL);
+    if (!new_root) return;
     cm_node_free(ctx->root);
-    ctx->root  = cm_node_new_object(NULL);
+    ctx->root  = new_root;
     ctx->dirty = 0;
 }
 
@@ -302,12 +324,17 @@ static cm_node_t *ensure_path(cm_ctx_t *ctx, const char *key_path,
     int n = parse_keypath(parent_path, segs, 64);
     cm_node_t *cur = ctx->root;
     for (int i = 0; i < n; i++) {
+        if (!cur || cur->type != CM_TYPE_OBJECT) return NULL;
         cm_node_t *child = object_find_child(cur, segs[i].name);
         if (!child) {
             child = cm_node_new_object(segs[i].name);
             if (!child) return NULL;
-            cm_node_object_add(cur, child);
+            if (cm_node_object_add(cur, child) != CM_OK) {
+                cm_node_free(child);
+                return NULL;
+            }
         }
+        if (child->type != CM_TYPE_OBJECT) return NULL;
         cur = child;
     }
     return cur;
@@ -319,13 +346,34 @@ static cm_node_t *ensure_path(cm_ctx_t *ctx, const char *key_path,
 
 static cm_error_t set_node(cm_ctx_t *ctx, const char *key_path, cm_node_t *newnode)
 {
+    cm_error_t result;
+    if (!ctx || !ctx->root || !key_path || !newnode) {
+        cm_node_free(newnode);
+        return CM_ERR_NULL_PTR;
+    }
+    if (!*key_path) {
+        cm_node_free(newnode);
+        return CM_ERR_INVALID_KEY;
+    }
+
     const char *leaf_key = NULL;
     cm_node_t  *parent   = ensure_path(ctx, key_path, &leaf_key);
-    if (!parent) return CM_ERR_NO_MEMORY;
-    if (parent->type != CM_TYPE_OBJECT) return CM_ERR_TYPE_MISMATCH;
+    if (!parent) { cm_node_free(newnode); return CM_ERR_TYPE_MISMATCH; }
+    if (parent->type != CM_TYPE_OBJECT) {
+        cm_node_free(newnode);
+        return CM_ERR_TYPE_MISMATCH;
+    }
+    if (!leaf_key || !*leaf_key) {
+        cm_node_free(newnode);
+        return CM_ERR_INVALID_KEY;
+    }
 
     free(newnode->key);
-    newnode->key = cm_strdup(leaf_key);
+    newnode->key = cm_internal_strdup(leaf_key);
+    if (!newnode->key) {
+        cm_node_free(newnode);
+        return CM_ERR_NO_MEMORY;
+    }
 
     /* replace existing or append */
     for (size_t i = 0; i < parent->value.object.count; i++) {
@@ -337,7 +385,11 @@ static cm_error_t set_node(cm_ctx_t *ctx, const char *key_path, cm_node_t *newno
             return CM_OK;
         }
     }
-    cm_node_object_add(parent, newnode);
+    result = cm_node_object_add(parent, newnode);
+    if (result != CM_OK) {
+        cm_node_free(newnode);
+        return result;
+    }
     ctx->dirty = 1;
     return CM_OK;
 }
@@ -388,6 +440,7 @@ cm_error_t cm_set_null(cm_ctx_t *ctx, const char *key)
 
 cm_error_t cm_get_string(cm_ctx_t *ctx, const char *key, const char **out)
 {
+    if (!ctx || !key || !out) return CM_ERR_NULL_PTR;
     cm_node_t *n = cm_get_node(ctx, key);
     if (!n) return CM_ERR_NOT_FOUND;
     if (n->type == CM_TYPE_STRING) { *out = n->value.sval; return CM_OK; }
@@ -396,6 +449,7 @@ cm_error_t cm_get_string(cm_ctx_t *ctx, const char *key, const char **out)
 
 cm_error_t cm_get_int(cm_ctx_t *ctx, const char *key, int64_t *out)
 {
+    if (!ctx || !key || !out) return CM_ERR_NULL_PTR;
     cm_node_t *n = cm_get_node(ctx, key);
     if (!n) return CM_ERR_NOT_FOUND;
     if (n->type == CM_TYPE_INT)   { *out = n->value.ival; return CM_OK; }
@@ -410,6 +464,7 @@ cm_error_t cm_get_int(cm_ctx_t *ctx, const char *key, int64_t *out)
 
 cm_error_t cm_get_float(cm_ctx_t *ctx, const char *key, double *out)
 {
+    if (!ctx || !key || !out) return CM_ERR_NULL_PTR;
     cm_node_t *n = cm_get_node(ctx, key);
     if (!n) return CM_ERR_NOT_FOUND;
     if (n->type == CM_TYPE_FLOAT) { *out = n->value.fval; return CM_OK; }
@@ -424,6 +479,7 @@ cm_error_t cm_get_float(cm_ctx_t *ctx, const char *key, double *out)
 
 cm_error_t cm_get_bool(cm_ctx_t *ctx, const char *key, int *out)
 {
+    if (!ctx || !key || !out) return CM_ERR_NULL_PTR;
     cm_node_t *n = cm_get_node(ctx, key);
     if (!n) return CM_ERR_NOT_FOUND;
     if (n->type == CM_TYPE_BOOL)   { *out = n->value.bval; return CM_OK; }
@@ -459,9 +515,22 @@ int cm_get_bool_or(cm_ctx_t *ctx, const char *key, int def)
 cm_error_t cm_delete(cm_ctx_t *ctx, const char *key_path)
 {
     if (!ctx || !key_path) return CM_ERR_NULL_PTR;
+    if (!*key_path) return CM_ERR_INVALID_KEY;
 
-    const char *leaf = NULL;
-    cm_node_t  *parent = ensure_path(ctx, key_path, &leaf);
+    const char *leaf = key_path;
+    cm_node_t *parent = ctx->root;
+    const char *last_dot = strrchr(key_path, '.');
+    if (last_dot) {
+        char parent_path[512];
+        size_t parent_length = (size_t)(last_dot - key_path);
+        if (parent_length == 0 || parent_length >= sizeof(parent_path))
+            return CM_ERR_INVALID_KEY;
+        memcpy(parent_path, key_path, parent_length);
+        parent_path[parent_length] = '\0';
+        parent = cm_get_node(ctx, parent_path);
+        leaf = last_dot + 1;
+    }
+    if (!*leaf) return CM_ERR_INVALID_KEY;
     if (!parent || parent->type != CM_TYPE_OBJECT) return CM_ERR_NOT_FOUND;
 
     for (size_t i = 0; i < parent->value.object.count; i++) {
@@ -490,6 +559,7 @@ int cm_has_key(cm_ctx_t *ctx, const char *key)
 
 cm_error_t cm_array_length(cm_ctx_t *ctx, const char *key, size_t *out)
 {
+    if (!ctx || !key || !out) return CM_ERR_NULL_PTR;
     cm_node_t *n = cm_get_node(ctx, key);
     if (!n) return CM_ERR_NOT_FOUND;
     if (n->type != CM_TYPE_ARRAY) return CM_ERR_TYPE_MISMATCH;
@@ -515,7 +585,7 @@ static cm_node_t *get_or_create_array(cm_ctx_t *ctx, const char *key)
     /* create */
     cm_node_t *arr = cm_node_new_array(NULL);
     if (!arr) return NULL;
-    if (set_node(ctx, key, arr) != CM_OK) { cm_node_free(arr); return NULL; }
+    if (set_node(ctx, key, arr) != CM_OK) return NULL;
     return cm_get_node(ctx, key);
 }
 
@@ -525,8 +595,13 @@ cm_error_t cm_array_push_string(cm_ctx_t *ctx, const char *key, const char *val)
     if (!arr) return CM_ERR_TYPE_MISMATCH;
     cm_node_t *item = cm_node_new_string(NULL, val);
     if (!item) return CM_ERR_NO_MEMORY;
+    cm_error_t result = cm_node_array_add(arr, item);
+    if (result != CM_OK) {
+        cm_node_free(item);
+        return result;
+    }
     ctx->dirty = 1;
-    return cm_node_array_add(arr, item);
+    return CM_OK;
 }
 
 cm_error_t cm_array_push_int(cm_ctx_t *ctx, const char *key, int64_t val)
@@ -535,16 +610,20 @@ cm_error_t cm_array_push_int(cm_ctx_t *ctx, const char *key, int64_t val)
     if (!arr) return CM_ERR_TYPE_MISMATCH;
     cm_node_t *item = cm_node_new_int(NULL, val);
     if (!item) return CM_ERR_NO_MEMORY;
+    cm_error_t result = cm_node_array_add(arr, item);
+    if (result != CM_OK) {
+        cm_node_free(item);
+        return result;
+    }
     ctx->dirty = 1;
-    return cm_node_array_add(arr, item);
+    return CM_OK;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
  * Walk
  * ═══════════════════════════════════════════════════════════════════ */
 
-static void walk_node(cm_node_t *node, char *path_buf, size_t buf_len,
-                      cm_walk_fn fn, void *ud)
+static void walk_node(cm_node_t *node, char *path_buf, cm_walk_fn fn, void *ud)
 {
     if (node->type == CM_TYPE_OBJECT) {
         for (size_t i = 0; i < node->value.object.count; i++) {
@@ -554,13 +633,13 @@ static void walk_node(cm_node_t *node, char *path_buf, size_t buf_len,
                 snprintf(child_path, sizeof(child_path), "%s.%s", path_buf, c->key ? c->key : "");
             else
                 snprintf(child_path, sizeof(child_path), "%s", c->key ? c->key : "");
-            walk_node(c, child_path, sizeof(child_path), fn, ud);
+            walk_node(c, child_path, fn, ud);
         }
     } else if (node->type == CM_TYPE_ARRAY) {
         for (size_t i = 0; i < node->value.array.count; i++) {
             char child_path[1024];
             snprintf(child_path, sizeof(child_path), "%s[%zu]", path_buf, i);
-            walk_node(node->value.array.items[i], child_path, sizeof(child_path), fn, ud);
+            walk_node(node->value.array.items[i], child_path, fn, ud);
         }
     } else {
         fn(path_buf, node, ud);
@@ -571,7 +650,7 @@ void cm_walk(cm_ctx_t *ctx, cm_walk_fn fn, void *ud)
 {
     if (!ctx || !fn || !ctx->root) return;
     char buf[1024] = {0};
-    walk_node(ctx->root, buf, sizeof(buf), fn, ud);
+    walk_node(ctx->root, buf, fn, ud);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -582,26 +661,46 @@ static cm_node_t *node_deep_copy(cm_node_t *src);
 
 static cm_node_t *node_deep_copy(cm_node_t *src)
 {
+    cm_error_t result;
     if (!src) return NULL;
     cm_node_t *dst = node_alloc();
     if (!dst) return NULL;
-    dst->key  = cm_strdup(src->key);
+    dst->key  = cm_internal_strdup(src->key);
+    if (src->key && !dst->key) { cm_node_free(dst); return NULL; }
     dst->type = src->type;
     switch (src->type) {
-        case CM_TYPE_STRING: dst->value.sval = cm_strdup(src->value.sval); break;
+        case CM_TYPE_STRING:
+            dst->value.sval = cm_internal_strdup(src->value.sval);
+            if (src->value.sval && !dst->value.sval) {
+                cm_node_free(dst);
+                return NULL;
+            }
+            break;
         case CM_TYPE_INT:    dst->value.ival = src->value.ival; break;
         case CM_TYPE_FLOAT:  dst->value.fval = src->value.fval; break;
         case CM_TYPE_BOOL:   dst->value.bval = src->value.bval; break;
         case CM_TYPE_OBJECT:
             for (size_t i = 0; i < src->value.object.count; i++) {
                 cm_node_t *c = node_deep_copy(src->value.object.children[i]);
-                if (c) cm_node_object_add(dst, c);
+                if (!c) { cm_node_free(dst); return NULL; }
+                result = cm_node_object_add(dst, c);
+                if (result != CM_OK) {
+                    cm_node_free(c);
+                    cm_node_free(dst);
+                    return NULL;
+                }
             }
             break;
         case CM_TYPE_ARRAY:
             for (size_t i = 0; i < src->value.array.count; i++) {
                 cm_node_t *c = node_deep_copy(src->value.array.items[i]);
-                if (c) cm_node_array_add(dst, c);
+                if (!c) { cm_node_free(dst); return NULL; }
+                result = cm_node_array_add(dst, c);
+                if (result != CM_OK) {
+                    cm_node_free(c);
+                    cm_node_free(dst);
+                    return NULL;
+                }
             }
             break;
         default: break;
@@ -609,7 +708,7 @@ static cm_node_t *node_deep_copy(cm_node_t *src)
     return dst;
 }
 
-static void merge_objects(cm_node_t *dst, cm_node_t *src, int overwrite)
+static cm_error_t merge_objects(cm_node_t *dst, cm_node_t *src, int overwrite)
 {
     for (size_t i = 0; i < src->value.object.count; i++) {
         cm_node_t *sc = src->value.object.children[i];
@@ -617,14 +716,19 @@ static void merge_objects(cm_node_t *dst, cm_node_t *src, int overwrite)
 
         if (!dc) {
             cm_node_t *copy = node_deep_copy(sc);
-            if (copy) cm_node_object_add(dst, copy);
+            if (!copy) return CM_ERR_NO_MEMORY;
+            cm_error_t result = cm_node_object_add(dst, copy);
+            if (result != CM_OK) {
+                cm_node_free(copy);
+                return result;
+            }
         } else if (dc->type == CM_TYPE_OBJECT && sc->type == CM_TYPE_OBJECT) {
-            merge_objects(dc, sc, overwrite);
+            cm_error_t result = merge_objects(dc, sc, overwrite);
+            if (result != CM_OK) return result;
         } else if (overwrite) {
             /* replace */
             cm_node_t *copy = node_deep_copy(sc);
-            if (!copy) continue;
-            free(copy->key); copy->key = cm_strdup(sc->key);
+            if (!copy) return CM_ERR_NO_MEMORY;
             for (size_t j = 0; j < dst->value.object.count; j++) {
                 if (dst->value.object.children[j] == dc) {
                     cm_node_free(dst->value.object.children[j]);
@@ -635,12 +739,17 @@ static void merge_objects(cm_node_t *dst, cm_node_t *src, int overwrite)
             }
         }
     }
+    return CM_OK;
 }
 
 cm_error_t cm_merge(cm_ctx_t *dst, const cm_ctx_t *src, int overwrite)
 {
     if (!dst || !src) return CM_ERR_NULL_PTR;
-    merge_objects(dst->root, src->root, overwrite);
+    if (!dst->root || !src->root || dst->root->type != CM_TYPE_OBJECT
+            || src->root->type != CM_TYPE_OBJECT)
+        return CM_ERR_TYPE_MISMATCH;
+    cm_error_t result = merge_objects(dst->root, src->root, overwrite);
+    if (result != CM_OK) return result;
     dst->dirty = 1;
     return CM_OK;
 }

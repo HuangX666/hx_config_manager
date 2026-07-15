@@ -116,19 +116,9 @@ cm_error_t cm_json_load_string(cm_ctx_t *ctx, const char *data)
 
 cm_error_t cm_json_load_file(cm_ctx_t *ctx, const char *path)
 {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return CM_ERR_IO;
-
-    fseek(fp, 0, SEEK_END);
-    long sz = ftell(fp);
-    rewind(fp);
-
-    char *buf = (char *)malloc((size_t)sz + 1);
-    if (!buf) { fclose(fp); return CM_ERR_NO_MEMORY; }
-    fread(buf, 1, (size_t)sz, fp);
-    buf[sz] = '\0';
-    fclose(fp);
-
+    char *buf = NULL;
+    cm_error_t read_result = cm_internal_read_file(path, &buf, NULL);
+    if (read_result != CM_OK) return read_result;
     cm_error_t err = cm_json_load_string(ctx, buf);
     free(buf);
     return err;
@@ -154,10 +144,7 @@ cm_error_t cm_json_save_file(cm_ctx_t *ctx, const char *path)
     char  *str = cm_json_save_string(ctx, &len);
     if (!str) return CM_ERR_NO_MEMORY;
 
-    FILE *fp = fopen(path, "wb");
-    if (!fp) { free(str); return CM_ERR_IO; }
-    fwrite(str, 1, len, fp);
-    fclose(fp);
+    cm_error_t result = cm_internal_write_file(path, str, len);
     free(str);
-    return CM_OK;
+    return result;
 }

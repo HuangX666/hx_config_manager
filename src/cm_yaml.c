@@ -58,7 +58,7 @@ static cm_node_t *parse_mapping(yaml_ctx_t *yc, const char *key)
     {
         /* key */
         if (yc->event.type != YAML_SCALAR_EVENT) { yctx_next(yc); continue; }
-        char *ckey = strdup((char *)yc->event.data.scalar.value);
+        char *ckey = cm_internal_strdup((char *)yc->event.data.scalar.value);
         yctx_next(yc);
 
         cm_node_t *val = parse_value(yc, ckey);
@@ -195,9 +195,9 @@ static void emit_scalar(yaml_emit_ctx_t *ec, const char *val, int is_key)
     YE_EMIT(ec);
 }
 
-static void emit_node(yaml_emit_ctx_t *ec, cm_node_t *n, int is_root);
+static void emit_node(yaml_emit_ctx_t *ec, cm_node_t *n);
 
-static void emit_node(yaml_emit_ctx_t *ec, cm_node_t *n, int is_root)
+static void emit_node(yaml_emit_ctx_t *ec, cm_node_t *n)
 {
     if (!n) return;
     char buf[64];
@@ -226,7 +226,7 @@ static void emit_node(yaml_emit_ctx_t *ec, cm_node_t *n, int is_root)
             for (size_t i = 0; i < n->value.object.count; i++) {
                 cm_node_t *c = n->value.object.children[i];
                 emit_scalar(ec, c->key ? c->key : "", 1);
-                emit_node(ec, c, 0);
+                emit_node(ec, c);
             }
             yaml_mapping_end_event_initialize(&ec->ev);
             YE_EMIT(ec);
@@ -237,7 +237,7 @@ static void emit_node(yaml_emit_ctx_t *ec, cm_node_t *n, int is_root)
                 NULL, (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_BLOCK_SEQUENCE_STYLE);
             YE_EMIT(ec);
             for (size_t i = 0; i < n->value.array.count; i++)
-                emit_node(ec, n->value.array.items[i], 0);
+                emit_node(ec, n->value.array.items[i]);
             yaml_sequence_end_event_initialize(&ec->ev);
             YE_EMIT(ec);
             break;
@@ -283,7 +283,7 @@ char *cm_yaml_save_string(cm_ctx_t *ctx, size_t *out_len)
     yaml_document_start_event_initialize(&ec.ev, NULL, NULL, NULL, 0);
     YE_EMIT(&ec);
 
-    emit_node(&ec, ctx->root, 1);
+    emit_node(&ec, ctx->root);
 
     /* DOCUMENT_END */
     yaml_document_end_event_initialize(&ec.ev, 1);
@@ -304,10 +304,7 @@ cm_error_t cm_yaml_save_file(cm_ctx_t *ctx, const char *path)
     char  *str = cm_yaml_save_string(ctx, &len);
     if (!str) return CM_ERR_NO_MEMORY;
 
-    FILE *fp = fopen(path, "wb");
-    if (!fp) { free(str); return CM_ERR_IO; }
-    fwrite(str, 1, len, fp);
-    fclose(fp);
+    cm_error_t result = cm_internal_write_file(path, str, len);
     free(str);
-    return CM_OK;
+    return result;
 }

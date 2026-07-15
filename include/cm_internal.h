@@ -12,6 +12,12 @@ extern "C" {
 
 /* ─── Format-specific load/save ─────────────────────────────────── */
 
+char      *cm_internal_strdup(const char *value);
+cm_error_t cm_internal_read_file(const char *path, char **out_data,
+                                 size_t *out_size);
+cm_error_t cm_internal_write_file(const char *path, const char *data,
+                                  size_t size);
+
 /* JSON */
 cm_error_t cm_json_load_string(cm_ctx_t *ctx, const char *data);
 cm_error_t cm_json_load_file(cm_ctx_t *ctx, const char *path);

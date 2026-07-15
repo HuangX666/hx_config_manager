@@ -49,6 +49,11 @@ int main(void)
     assert(out && olen > 0);
     free(out);
 
+    assert(cm_load_string(ctx, "{ invalid", CM_FORMAT_JSON) == CM_ERR_PARSE);
+    host = NULL;
+    assert(cm_get_string(ctx, "server.host", &host) == CM_OK);
+    assert(strcmp(host, "localhost") == 0);
+
     cm_ctx_destroy(ctx);
     printf("  JSON load/save             PASS\n");
     return 0;
